@@ -31,9 +31,6 @@ console.log("🟢 MongoDB bağlantısı başarılı");
 io.on("connection", (socket) => {
 console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
 
-javascript
-Kopyala
-Düzenle
 // ✅ Tekil ve doğru register_user
 socket.on("register_user", async ({ gameName, tagLine }) => {
   const userId = `${gameName}#${tagLine}`;
