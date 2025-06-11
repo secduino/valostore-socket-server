@@ -37,10 +37,9 @@ async function startServer() {
       }
     });
 
-    // ✅ Kullanıcı arama (gameName + tagLine destekli)
+    // ✅ Kullanıcı arama
     socket.on("search_user", async ({ gameName, tagLine }) => {
       console.log(`🔍 Arama: ${gameName}#${tagLine}`);
-
       const users = db.collection("users");
       const result = await users.findOne({ gameName, tagLine });
 
@@ -52,7 +51,6 @@ async function startServer() {
         socket.emit("search_results", []);
       }
     });
-
 
     // ✅ Arkadaş ekleme
     socket.on("add_friend", async ({ from, to }) => {
@@ -74,6 +72,8 @@ async function startServer() {
       );
 
       await friends.insertOne({ from: to, to: from, status: "accepted" });
+
+      console.log(`🤝 Arkadaşlık kabul edildi: ${from} ⇆ ${to}`);
     });
 
     // ✅ Engelleme
@@ -84,51 +84,48 @@ async function startServer() {
         { $set: { status: "blocked" } },
         { upsert: true }
       );
+      console.log(`⛔ ${from} kullanıcısını engelledi: ${to}`);
     });
 
     // ✅ Arkadaş listesi
-socket.on("get_friends", async ({ userId }) => {
-  const friends = db.collection("friends");
+    socket.on("get_friends", async ({ userId }) => {
+      const friends = db.collection("friends");
+      const relations = await friends.find({
+        $or: [{ from: userId }, { to: userId }]
+      }).toArray();
 
-  // Kullanıcının dahil olduğu tüm ilişkileri al (pending dahil)
-  const relations = await friends.find({
-    $or: [{ from: userId }, { to: userId }]
-  }).toArray();
+      const userList = relations.map((rel) =>
+        rel.from === userId ? rel.to : rel.from
+      );
 
-  const userList = relations.map((rel) =>
-    rel.from === userId ? rel.to : rel.from
-  );
+      const users = db.collection("users");
+      const friendProfiles = await users.find({
+        $or: userList.map((id) => {
+          const [gameName, tagLine] = id.split("#");
+          return { gameName, tagLine };
+        }),
+      }).toArray();
 
-  const users = db.collection("users");
+      const enrichedList = relations.map((rel) => {
+        const friendId = rel.from === userId ? rel.to : rel.from;
+        const [g, t] = friendId.split("#");
 
-  // Karşı tarafın bilgilerini al
-  const friendProfiles = await users.find({
-    $or: userList.map((id) => {
-      const [gameName, tagLine] = id.split("#");
-      return { gameName, tagLine };
-    }),
-  }).toArray();
+        const profile = friendProfiles.find(
+          (p) => p.gameName === g && p.tagLine === t
+        );
 
-  // Kullanıcının arkadaşlarının detaylarını ilişkiyle birleştir
-  const enrichedList = relations.map((rel) => {
-    const friendId = rel.from === userId ? rel.to : rel.from;
-    const [g, t] = friendId.split("#");
+        return {
+          gameName: g,
+          tagLine: t,
+          status: rel.status,
+          direction: rel.from === userId ? "sent" : "received",
+          avatar: profile?.avatar ?? null
+        };
+      });
 
-    const profile = friendProfiles.find(
-      (p) => p.gameName === g && p.tagLine === t
-    );
-
-    return {
-      gameName: g,
-      tagLine: t,
-      status: rel.status,
-      direction: rel.from === userId ? "sent" : "received",
-      avatar: profile?.avatar ?? null // varsa avatar, yoksa null
-    };
-  });
-
-  socket.emit("friend_list", enrichedList);
-});
+      socket.emit("friend_list", enrichedList);
+      console.log(`📦 Arkadaş listesi gönderildi: ${userId}`);
+    });
 
     // ✅ Mesaj gönderme
     socket.on("send_message", async (data) => {
@@ -145,6 +142,7 @@ socket.on("get_friends", async ({ userId }) => {
 
       await messages.insertOne(msg);
       io.emit("receive_message", msg);
+      console.log(`📨 Mesaj: ${from} → ${to}: ${message}`);
     });
 
     // ✅ Mesaj geçmişi
@@ -162,6 +160,7 @@ socket.on("get_friends", async ({ userId }) => {
         .toArray();
 
       socket.emit("chat_messages", result);
+      console.log(`📚 Geçmiş mesajlar gönderildi: ${from} ⇄ ${to}`);
     });
 
     // ✅ Okundu bilgisi
@@ -171,17 +170,20 @@ socket.on("get_friends", async ({ userId }) => {
         { from, to, isRead: false },
         { $set: { isRead: true } }
       );
+      console.log(`📘 Okundu işaretlendi: ${from} → ${to}`);
     });
 
     socket.on("disconnect", () => {
       console.log("⛔ Bağlantı kesildi:", socket.id);
     });
   });
+}
 
+// ✅ Sunucuyu başlat
+startServer().catch(console.error);
+
+// ✅ Render veya yerel ortam portu
 const port = process.env.PORT || 10000;
-
 server.listen(port, () => {
   console.log(`🚀 Sunucu çalışıyor: ${port}`);
 });
-
-startServer().catch(console.error);
