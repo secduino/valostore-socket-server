@@ -11,8 +11,8 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
 });
 
 const uri = "mongodb+srv://valostoremobile:7gv2texdfgcyV3DG@cluster0.egxyjsw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
@@ -27,7 +27,7 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
 
-    // Kullanıcı kaydı
+    // ✅ Kullanıcı kaydı
     socket.on("register_user", async ({ gameName, tagLine }) => {
       const users = db.collection("users");
       const existing = await users.findOne({ gameName, tagLine });
@@ -37,33 +37,32 @@ async function startServer() {
       }
     });
 
-    // Arkadaş arama
-socket.on("search_user", async ({ query }) => {
-  const users = db.collection("users");
+    // ✅ Kullanıcı arama (gameName#tagLine şeklinde)
+    socket.on("search_user", async ({ query }) => {
+      const users = db.collection("users");
 
-  // 🔥 Örnek: query = "JOKAMAX#8891"
-  if (!query.includes("#")) {
-    socket.emit("search_results", []);
-    return;
-  }
+      if (!query.includes("#")) {
+        socket.emit("search_results", []);
+        return;
+      }
 
-  const [gameName, tagLine] = query.split("#");
+      const [gameName, tagLine] = query.split("#");
 
-  if (!gameName || !tagLine) {
-    socket.emit("search_results", []);
-    return;
-  }
+      if (!gameName || !tagLine) {
+        socket.emit("search_results", []);
+        return;
+      }
 
-  const result = await users.findOne({ gameName, tagLine });
+      const result = await users.findOne({ gameName, tagLine });
 
-  if (result) {
-    socket.emit("search_results", [result]); // liste olarak gönder
-  } else {
-    socket.emit("search_results", []);
-  }
-});
+      if (result) {
+        socket.emit("search_results", [result]);
+      } else {
+        socket.emit("search_results", []);
+      }
+    });
 
-    // Arkadaş ekleme
+    // ✅ Arkadaş ekleme
     socket.on("add_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       const existing = await friends.findOne({ from, to });
@@ -73,7 +72,7 @@ socket.on("search_user", async ({ query }) => {
       }
     });
 
-    // Arkadaş isteği kabul etme
+    // ✅ İstek kabul
     socket.on("accept_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       await friends.updateOne(
@@ -83,7 +82,7 @@ socket.on("search_user", async ({ query }) => {
       await friends.insertOne({ from: to, to: from, status: "accepted" });
     });
 
-    // Engelleme
+    // ✅ Engelleme
     socket.on("block_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       await friends.updateOne(
@@ -93,67 +92,66 @@ socket.on("search_user", async ({ query }) => {
       );
     });
 
-socket.on("get_friends", async ({ userId }) => {
-  const friends = db.collection("friends");
-  const result = await friends.find({
-    $or: [{ from: userId }, { to: userId }],
-    status: "accepted"
-  }).toArray();
+    // ✅ Arkadaş listesi
+    socket.on("get_friends", async ({ userId }) => {
+      const friends = db.collection("friends");
+      const result = await friends.find({
+        $or: [{ from: userId }, { to: userId }],
+        status: "accepted",
+      }).toArray();
 
-  const userList = result.map((f) =>
-    f.from === userId ? f.to : f.from
-  );
+      const userList = result.map((f) =>
+        f.from === userId ? f.to : f.from
+      );
 
-  if (userList.length === 0) {
-    socket.emit("friend_list", []);
-    return;
-  }
+      if (!userList.length) {
+        socket.emit("friend_list", []);
+        return;
+      }
 
-  const users = db.collection("users");
-  const friendsData = await users
-    .find({
-      $or: userList.map((id) => {
-        const [gameName, tagLine] = id.split("#");
-        return { gameName, tagLine };
-      }),
-    })
-    .toArray();
+      const users = db.collection("users");
+      const friendsData = await users
+        .find({
+          $or: userList.map((id) => {
+            const [gameName, tagLine] = id.split("#");
+            return { gameName, tagLine };
+          }),
+        })
+        .toArray();
 
-  socket.emit("friend_list", friendsData);
-});
+      socket.emit("friend_list", friendsData);
+    });
 
-
-    // Mesaj gönderme
-    socket.on("send_message", async (data) => {
+    // ✅ Mesaj gönderme
+    socket.on("send_message", async ({ from, to, message }) => {
       const messages = db.collection("messages");
-      const { from, to, message } = data;
       const msg = {
         from,
         to,
         message,
         timestamp: new Date(),
-        isRead: false
+        isRead: false,
       };
 
       await messages.insertOne(msg);
       io.emit("receive_message", msg);
     });
 
-    // Mesajları getirme
+    // ✅ Mesajları çekme
     socket.on("get_messages", async ({ from, to }) => {
       const messages = db.collection("messages");
 
       const result = await messages.find({
         $or: [
           { from, to },
-          { from: to, to: from }
-        ]
+          { from: to, to: from },
+        ],
       }).sort({ timestamp: 1 }).toArray();
 
       socket.emit("chat_messages", result);
     });
 
-    // Okundu bilgisi
+    // ✅ Okundu işaretle
     socket.on("read_messages", async ({ from, to }) => {
       const messages = db.collection("messages");
       await messages.updateMany(
