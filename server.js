@@ -1,29 +1,90 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const { MongoClient } = require("mongodb");
+const cors = require("cors");
+
 const app = express();
+app.use(cors());
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: "*",
+    methods: ["GET", "POST"]
   }
 });
 
-io.on('connection', (socket) => {
-  console.log('Kullanıcı bağlandı:', socket.id);
+// MongoDB bağlantısı
+const uri = "mongodb+srv://valostoremobile:7gv2texdfgcyV3DG@cluster0.egxyjsw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+const client = new MongoClient(uri);
+let db;
 
-  socket.on('message', (data) => {
-    console.log('Mesaj:', data);
-    socket.broadcast.emit('message', data);
+async function startServer() {
+  await client.connect();
+  db = client.db("valostore");
+
+  console.log("🟢 MongoDB bağlantısı başarılı");
+
+  io.on("connection", (socket) => {
+    console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
+
+    // Kullanıcı kayıt
+    socket.on("register_user", async (userData) => {
+      const { gameName, tagLine } = userData;
+      const users = db.collection("users");
+      const existing = await users.findOne({ gameName, tagLine });
+
+      if (!existing) {
+        await users.insertOne({ gameName, tagLine });
+        console.log(`🧍 Yeni kullanıcı: ${gameName}#${tagLine}`);
+      }
+    });
+
+    // Arkadaş ekleme
+    socket.on("add_friend", async ({ from, to }) => {
+      const friends = db.collection("friends");
+      await friends.insertOne({
+        from,
+        to,
+        status: "pending"
+      });
+    });
+
+    // Mesaj gönderme
+    socket.on("send_message", async (data) => {
+      const messages = db.collection("messages");
+      const { from, to, message } = data;
+
+      const msg = {
+        from,
+        to,
+        message,
+        timestamp: new Date(),
+        isRead: false
+      };
+
+      await messages.insertOne(msg);
+      io.emit("receive_message", msg);
+    });
+
+    // Okundu işaretleme
+    socket.on("read_messages", async ({ from, to }) => {
+      const messages = db.collection("messages");
+      await messages.updateMany(
+        { from, to, isRead: false },
+        { $set: { isRead: true } }
+      );
+    });
+
+    socket.on("disconnect", () => {
+      console.log("⛔ Bağlantı kesildi:", socket.id);
+    });
   });
 
-  socket.on('disconnect', () => {
-    console.log('Kullanıcı ayrıldı:', socket.id);
+  server.listen(10000, () => {
+    console.log("🚀 Sunucu çalışıyor: 10000");
   });
-});
+}
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Sunucu çalışıyor: ${PORT}`);
-});
+startServer().catch(console.error);
