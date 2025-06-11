@@ -51,19 +51,28 @@ async function startServer() {
     });
 
     // Arkadaş listesini çek
-    socket.on("get_friends", async ({ userId }) => {
-      const friendsCol = db.collection("friends");
+    socket.on("get_friends", async ({ gameName, tagLine }) => {
+    const friendsCol = db.collection("friends");
+    const currentUser = `${gameName}#${tagLine}`;
 
-      const result = await friendsCol.find({
-        $or: [
-          { from: userId },
-          { to: userId }
-        ],
-        status: "accepted"
-      }).toArray();
+    const sent = await friendsCol.find({ from: currentUser, status: "accepted" }).toArray();
+    const received = await friendsCol.find({ to: currentUser, status: "accepted" }).toArray();
 
-      socket.emit("friend_list", result);
-    });
+    const friendUsernames = [
+    ...sent.map(f => f.to),
+    ...received.map(f => f.from)
+    ];
+
+    const users = db.collection("users");
+    const friendData = await users.find({ 
+    $or: friendUsernames.map(u => {
+      const [gName, tLine] = u.split("#");
+      return { gameName: gName, tagLine: tLine };
+    })
+  }).toArray();
+
+  socket.emit("friends_list", friendData);
+  });
 
     // Mesaj gönderme
     socket.on("send_message", async (data) => {
