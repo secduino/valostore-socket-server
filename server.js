@@ -41,7 +41,12 @@ async function startServer() {
 socket.on("search_user", async ({ query }) => {
   const users = db.collection("users");
 
-  // 🔥 Örnek: query = "karakterinisage#0000"
+  // 🔥 Örnek: query = "JOKAMAX#8891"
+  if (!query.includes("#")) {
+    socket.emit("search_results", []);
+    return;
+  }
+
   const [gameName, tagLine] = query.split("#");
 
   if (!gameName || !tagLine) {
@@ -52,9 +57,9 @@ socket.on("search_user", async ({ query }) => {
   const result = await users.findOne({ gameName, tagLine });
 
   if (result) {
-    socket.emit("search_results", [result]); // liste içinde döndür
+    socket.emit("search_results", [result]); // liste olarak gönder
   } else {
-    socket.emit("search_results", []); // bulunamadı
+    socket.emit("search_results", []);
   }
 });
 
