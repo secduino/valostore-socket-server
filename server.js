@@ -51,28 +51,31 @@ async function startServer() {
     });
 
     // Arkadaş listesini çek
-    socket.on("get_friends", async ({ gameName, tagLine }) => {
-    const friendsCol = db.collection("friends");
-    const currentUser = `${gameName}#${tagLine}`;
+    socket.on("get_friends", async ({ userId }) => {
+      const friendsCol = db.collection("friends");
 
-    const sent = await friendsCol.find({ from: currentUser, status: "accepted" }).toArray();
-    const received = await friendsCol.find({ to: currentUser, status: "accepted" }).toArray();
+      const result = await friendsCol.find({
+        $or: [
+          { from: userId },
+          { to: userId }
+        ],
+        status: "accepted"
+      }).toArray();
 
-    const friendUsernames = [
-    ...sent.map(f => f.to),
-    ...received.map(f => f.from)
-    ];
+      // İlgili kullanıcıların gameName ve tagLine bilgilerini getir
+      const userIds = result.map(f =>
+        f.from === userId ? f.to : f.from
+      );
 
-    const users = db.collection("users");
-    const friendData = await users.find({ 
-    $or: friendUsernames.map(u => {
-      const [gName, tLine] = u.split("#");
-      return { gameName: gName, tagLine: tLine };
-    })
-  }).toArray();
+      const users = await db.collection("users").find({
+        $or: userIds.map(id => {
+          const [gameName, tagLine] = id.split("#");
+          return { gameName, tagLine };
+        })
+      }).toArray();
 
-  socket.emit("friends_list", friendData);
-  });
+      socket.emit("friend_list", users);
+    });
 
     // Mesaj gönderme
     socket.on("send_message", async (data) => {
@@ -98,6 +101,28 @@ async function startServer() {
         { from, to, isRead: false },
         { $set: { isRead: true } }
       );
+    });
+
+    // Mesaj geçmişi çekme
+    socket.on("get_messages", async ({ from, to }) => {
+      const messages = db.collection("messages");
+
+      const history = await messages
+        .find({
+          $or: [
+            { from, to },
+            { from: to, to: from },
+          ]
+        })
+        .sort({ timestamp: 1 })
+        .toArray();
+
+      await messages.updateMany(
+        { from: to, to: from, isRead: false },
+        { $set: { isRead: true } }
+      );
+
+      socket.emit("messages_list", history);
     });
 
     socket.on("disconnect", () => {
