@@ -187,3 +187,50 @@ const port = process.env.PORT || 10000;
 server.listen(port, () => {
   console.log(`🚀 Sunucu çalışıyor: ${port}`);
 });
+
+socket.on("get_friends", async ({ userId }) => {
+  const friends = db.collection("friends");
+
+  const relations = await friends.find({
+    $or: [{ from: userId }, { to: userId }]
+  }).toArray();
+
+  const userList = relations.map((rel) =>
+    rel.from === userId ? rel.to : rel.from
+  );
+
+  if (userList.length === 0) {
+    socket.emit("friend_list", []);
+    console.log(`📦 Boş arkadaş listesi gönderildi: ${userId}`);
+    return;
+  }
+
+  const users = db.collection("users");
+
+  const friendProfiles = await users.find({
+    $or: userList.map((id) => {
+      const [gameName, tagLine] = id.split("#");
+      return { gameName, tagLine };
+    }),
+  }).toArray();
+
+  const enrichedList = relations.map((rel) => {
+    const friendId = rel.from === userId ? rel.to : rel.from;
+    const [g, t] = friendId.split("#");
+
+    const profile = friendProfiles.find(
+      (p) => p.gameName === g && p.tagLine === t
+    );
+
+    return {
+      gameName: g,
+      tagLine: t,
+      status: rel.status,
+      direction: rel.from === userId ? "sent" : "received",
+      avatar: profile?.avatar ?? null
+    };
+  });
+
+  socket.emit("friend_list", enrichedList);
+  console.log(`📦 Arkadaş listesi gönderildi: ${userId}`);
+});
