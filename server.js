@@ -38,16 +38,21 @@ async function startServer() {
     });
 
     // ✅ Kullanıcı arama (gameName + tagLine destekli)
-    socket.on("search_user", async ({ gameName, tagLine }) => {
-      const users = db.collection("users");
+socket.on("search_user", async ({ gameName, tagLine }) => {
+  console.log(`🔍 Arama: ${gameName}#${tagLine}`); // 👈 Bu log görünüyor mu Render'da?
 
-      const query = {};
-      if (gameName) query.gameName = { $regex: `^${gameName}$`, $options: "i" };
-      if (tagLine) query.tagLine = { $regex: `^${tagLine}$`, $options: "i" };
+  const users = db.collection("users");
+  const result = await users.findOne({ gameName, tagLine });
 
-      const results = await users.find(query).limit(10).toArray();
-      socket.emit("search_results", results);
-    });
+  if (result) {
+    console.log("✅ Kullanıcı bulundu");
+    socket.emit("search_results", [result]);
+  } else {
+    console.log("❌ Kullanıcı bulunamadı");
+    socket.emit("search_results", []);
+  }
+});
+
 
     // ✅ Arkadaş ekleme
     socket.on("add_friend", async ({ from, to }) => {
