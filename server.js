@@ -29,9 +29,8 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
 
-    // Kullanıcı kayıt
-    socket.on("register_user", async (userData) => {
-      const { gameName, tagLine } = userData;
+    // Kullanıcı kaydı
+    socket.on("register_user", async ({ gameName, tagLine }) => {
       const users = db.collection("users");
       const existing = await users.findOne({ gameName, tagLine });
 
@@ -49,6 +48,21 @@ async function startServer() {
         to,
         status: "pending"
       });
+    });
+
+    // Arkadaş listesini çek
+    socket.on("get_friends", async ({ userId }) => {
+      const friendsCol = db.collection("friends");
+
+      const result = await friendsCol.find({
+        $or: [
+          { from: userId },
+          { to: userId }
+        ],
+        status: "accepted"
+      }).toArray();
+
+      socket.emit("friend_list", result);
     });
 
     // Mesaj gönderme
