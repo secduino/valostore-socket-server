@@ -40,12 +40,22 @@ async function startServer() {
     // Arkadaş arama
 socket.on("search_user", async ({ query }) => {
   const users = db.collection("users");
-  const results = await users
-    .find({ gameName: { $regex: query, $options: "i" } })
-    .limit(10)
-    .toArray();
 
-  socket.emit("search_results", results);
+  // 🔥 Örnek: query = "karakterinisage#0000"
+  const [gameName, tagLine] = query.split("#");
+
+  if (!gameName || !tagLine) {
+    socket.emit("search_results", []);
+    return;
+  }
+
+  const result = await users.findOne({ gameName, tagLine });
+
+  if (result) {
+    socket.emit("search_results", [result]); // liste içinde döndür
+  } else {
+    socket.emit("search_results", []); // bulunamadı
+  }
 });
 
     // Arkadaş ekleme
