@@ -38,16 +38,15 @@ async function startServer() {
     });
 
     // Arkadaş arama
-    socket.on("search_user", async ({ query }) => {
-      const users = db.collection("users");
-      const results = await users.find({
-        $or: [
-          { gameName: { $regex: query, $options: "i" } },
-          { tagLine: { $regex: query, $options: "i" } }
-        ]
-      }).toArray();
-      socket.emit("search_results", results);
-    });
+socket.on("search_user", async ({ query }) => {
+  const users = db.collection("users");
+  const results = await users
+    .find({ gameName: { $regex: query, $options: "i" } })
+    .limit(10)
+    .toArray();
+
+  socket.emit("search_results", results);
+});
 
     // Arkadaş ekleme
     socket.on("add_friend", async ({ from, to }) => {
