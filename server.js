@@ -87,34 +87,48 @@ socket.on("search_user", async ({ gameName, tagLine }) => {
     });
 
     // ✅ Arkadaş listesi
-    socket.on("get_friends", async ({ userId }) => {
-      const friends = db.collection("friends");
+socket.on("get_friends", async ({ userId }) => {
+  const friends = db.collection("friends");
 
-      const result = await friends
-        .find({
-          $or: [{ from: userId }, { to: userId }],
-          status: "accepted",
-        })
-        .toArray();
+  // Kullanıcının dahil olduğu tüm ilişkileri al (pending dahil)
+  const relations = await friends.find({
+    $or: [{ from: userId }, { to: userId }]
+  }).toArray();
 
-      const userList = result.map((f) => (f.from === userId ? f.to : f.from));
-      if (userList.length === 0) {
-        socket.emit("friend_list", []);
-        return;
-      }
+  const userList = relations.map((rel) =>
+    rel.from === userId ? rel.to : rel.from
+  );
 
-      const users = db.collection("users");
-      const friendsData = await users
-        .find({
-          $or: userList.map((id) => {
-            const [gameName, tagLine] = id.split("#");
-            return { gameName, tagLine };
-          }),
-        })
-        .toArray();
+  const users = db.collection("users");
 
-      socket.emit("friend_list", friendsData);
-    });
+  // Karşı tarafın bilgilerini al
+  const friendProfiles = await users.find({
+    $or: userList.map((id) => {
+      const [gameName, tagLine] = id.split("#");
+      return { gameName, tagLine };
+    }),
+  }).toArray();
+
+  // Kullanıcının arkadaşlarının detaylarını ilişkiyle birleştir
+  const enrichedList = relations.map((rel) => {
+    const friendId = rel.from === userId ? rel.to : rel.from;
+    const [g, t] = friendId.split("#");
+
+    const profile = friendProfiles.find(
+      (p) => p.gameName === g && p.tagLine === t
+    );
+
+    return {
+      gameName: g,
+      tagLine: t,
+      status: rel.status,
+      direction: rel.from === userId ? "sent" : "received",
+      avatar: profile?.avatar ?? null // varsa avatar, yoksa null
+    };
+  });
+
+  socket.emit("friend_list", enrichedList);
+});
 
     // ✅ Mesaj gönderme
     socket.on("send_message", async (data) => {
