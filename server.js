@@ -178,9 +178,10 @@ socket.on("get_friends", async ({ userId }) => {
     });
   });
 
-  server.listen(10000, () => {
-    console.log("🚀 Sunucu çalışıyor: 10000");
-  });
-}
+const port = process.env.PORT || 10000;
+
+server.listen(port, () => {
+  console.log(`🚀 Sunucu çalışıyor: ${port}`);
+});
 
 startServer().catch(console.error);
