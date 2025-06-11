@@ -7,7 +7,7 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 
-// ✅ Render için root kontrol endpoint
+// ✅ Render root test endpoint
 app.get("/", (req, res) => {
   res.status(200).send("✅ Valstore socket server çalışıyor.");
 });
@@ -32,20 +32,22 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
 
-    // ✅ Kullanıcı kaydı
+    // Kullanıcı kimliği ataması (bildirim için)
     socket.on("register_user", async ({ gameName, tagLine }) => {
+      const userId = `${gameName}#${tagLine}`;
+      socket.userId = userId;
+
       const users = db.collection("users");
       const existing = await users.findOne({ gameName, tagLine });
       if (!existing) {
         await users.insertOne({ gameName, tagLine });
-        console.log(`🧍 Yeni kullanıcı: ${gameName}#${tagLine}`);
+        console.log(`🧍 Yeni kullanıcı: ${userId}`);
       }
     });
 
-    // ✅ Kullanıcı arama
+    // Kullanıcı arama
     socket.on("search_user", async ({ gameName, tagLine }) => {
       console.log(`🔍 Arama: ${gameName}#${tagLine}`);
-
       const users = db.collection("users");
       const result = await users.findOne({ gameName, tagLine });
 
@@ -58,7 +60,7 @@ async function startServer() {
       }
     });
 
-    // ✅ Arkadaş ekleme
+    // Arkadaş ekleme
     socket.on("add_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       const existing = await friends.findOne({ from, to });
@@ -66,7 +68,6 @@ async function startServer() {
         await friends.insertOne({ from, to, status: "pending" });
         console.log(`👥 İstek gönderildi: ${from} ➡ ${to}`);
 
-        // ✅ Bildirim gönder
         const toSocket = [...io.sockets.sockets.values()].find(
           (s) => s.userId === to
         );
@@ -76,7 +77,7 @@ async function startServer() {
       }
     });
 
-    // ✅ Arkadaş isteği kabul
+    // Arkadaş isteği kabul
     socket.on("accept_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
 
@@ -84,13 +85,12 @@ async function startServer() {
         { from, to, status: "pending" },
         { $set: { status: "accepted" } }
       );
-
       await friends.insertOne({ from: to, to: from, status: "accepted" });
 
       console.log(`🤝 Arkadaşlık kabul edildi: ${from} ↔ ${to}`);
     });
 
-    // ✅ Engelleme
+    // Engelleme
     socket.on("block_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       await friends.updateOne(
@@ -101,7 +101,7 @@ async function startServer() {
       console.log(`⛔ ${from} → ${to} kullanıcısını engelledi.`);
     });
 
-    // ✅ Arkadaş listesi
+    // Arkadaş listesi
     socket.on("get_friends", async ({ userId }) => {
       const friends = db.collection("friends");
 
@@ -148,7 +148,7 @@ async function startServer() {
       console.log(`📦 Arkadaş listesi gönderildi: ${userId}`);
     });
 
-    // ✅ Mesaj gönderme
+    // Mesaj gönderme
     socket.on("send_message", async (data) => {
       const messages = db.collection("messages");
       const { from, to, message } = data;
@@ -165,7 +165,7 @@ async function startServer() {
       io.emit("receive_message", msg);
     });
 
-    // ✅ Mesaj geçmişi
+    // Mesaj geçmişi
     socket.on("get_messages", async ({ from, to }) => {
       const messages = db.collection("messages");
 
@@ -182,19 +182,13 @@ async function startServer() {
       socket.emit("chat_messages", result);
     });
 
-    // ✅ Okundu bilgisi
+    // Okundu bilgisi
     socket.on("read_messages", async ({ from, to }) => {
       const messages = db.collection("messages");
       await messages.updateMany(
         { from, to, isRead: false },
         { $set: { isRead: true } }
       );
-    });
-
-    // Kullanıcı id eşlemesi (bildirim için)
-    socket.on("register_user", ({ gameName, tagLine }) => {
-      const userId = `${gameName}#${tagLine}`;
-      socket.userId = userId;
     });
 
     socket.on("disconnect", () => {
