@@ -147,7 +147,7 @@ socket.on("disconnect", () => {
 
 const port = process.env.PORT || 10000;
 server.listen(port, () => {
-console.log(🚀 Sunucu çalışıyor: ${port});
+console.log(`🚀 Sunucu çalışıyor: ${port}`);
 });
 
 startServer().catch(console.error);
