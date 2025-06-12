@@ -38,8 +38,13 @@ async function startServer() {
       const users = db.collection("users");
       const existing = await users.findOne({ gameName, tagLine });
       if (!existing) {
-        await users.insertOne({ gameName, tagLine });
+        await users.insertOne({ gameName, tagLine, status: "online" });
         console.log(`🧍 Yeni kullanıcı: ${userId}`);
+      } else {
+        await users.updateOne(
+          { gameName, tagLine },
+          { $set: { status: "online" } }
+        );
       }
 
       console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
@@ -47,13 +52,16 @@ async function startServer() {
       // Offline'da gelen pending istekleri bildir
       const pending = await db.collection("friends").find({
         to: userId,
-        status: "pending"
+        status: "pending",
       }).toArray();
 
-      pending.forEach(req => {
+      pending.forEach((req) => {
         socket.emit("friend_request", { from: req.from, to: req.to });
         console.log(`📬 Offline isteği bildirildi → ${userId}`);
       });
+
+      // Kullanıcı durumunu yayınla
+      io.emit("user_status", { userId, status: "online" });
     });
 
     socket.on("search_user", async ({ gameName, tagLine }) => {
@@ -70,20 +78,26 @@ async function startServer() {
         await friends.insertOne({ from, to, status: "pending" });
         console.log(`👥 İstek gönderildi: ${from} ➡ ${to}`);
 
-        const toSocket = [...io.sockets.sockets.values()].find((s) => s.userId === to);
+        const toSocket = [...io.sockets.sockets.values()].find(
+          (s) => s.userId === to
+        );
         if (toSocket) {
           console.log(`🔔 Bildirim gönderiliyor → ${to}`);
           toSocket.emit("friend_request", { from, to });
         } else {
           console.log(`📭 Bildirim gönderilemedi, ${to} çevrimdışı`);
         }
+
+        socket.emit("friend_request_status", {
+          status: "pending",
+          from,
+          to,
+        });
       }
     });
 
     socket.on("accept_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
-
-      // ✅ Yalnızca mevcut pending kaydı güncelle
       const result = await friends.updateOne(
         { from, to, status: "pending" },
         { $set: { status: "accepted" } }
@@ -105,6 +119,45 @@ async function startServer() {
       }
     });
 
+    socket.on("reject_friend", async ({ from, to }) => {
+      const friends = db.collection("friends");
+      await friends.deleteOne({ from, to, status: "pending" });
+      console.log(`❌ Arkadaşlık isteği reddedildi: ${from} ➡ ${to}`);
+
+      const sockets = [...io.sockets.sockets.values()];
+      const fromSocket = sockets.find((s) => s.userId === from);
+      const toSocket = sockets.find((s) => s.userId === to);
+
+      if (fromSocket) {
+        fromSocket.emit("friend_list_request");
+      }
+      if (toSocket) {
+        toSocket.emit("friend_list_request");
+      }
+    });
+
+    socket.on("remove_friend", async ({ from, to }) => {
+      const friends = db.collection("friends");
+      await friends.deleteOne({
+        $or: [
+          { from, to, status: "accepted" },
+          { from: to, to: from, status: "accepted" },
+        ],
+      });
+      console.log(`🗑️ Arkadaş silindi: ${from} ↔ ${to}`);
+
+      const sockets = [...io.sockets.sockets.values()];
+      const fromSocket = sockets.find((s) => s.userId === from);
+      const toSocket = sockets.find((s) => s.userId === to);
+
+      if (fromSocket) {
+        fromSocket.emit("friend_list_request");
+      }
+      if (toSocket) {
+        toSocket.emit("friend_list_request");
+      }
+    });
+
     socket.on("block_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       await friends.updateOne(
@@ -112,15 +165,47 @@ async function startServer() {
         { $set: { status: "blocked" } },
         { upsert: true }
       );
+      // Arkadaşlık ilişkisini sil
+      await friends.deleteOne({
+        $or: [
+          { from, to, status: "accepted" },
+          { from: to, to: from, status: "accepted" },
+        ],
+      });
+      console.log(`⛔ Kullanıcı engellendi: ${from} ✋ ${to}`);
+
+      const sockets = [...io.sockets.sockets.values()];
+      const fromSocket = sockets.find((s) => s.userId === from);
+      const toSocket = sockets.find((s) => s.userId === to);
+
+      if (fromSocket) {
+        fromSocket.emit("friend_list_request");
+      }
+      if (toSocket) {
+        toSocket.emit("friend_list_request");
+      }
+    });
+
+    socket.on("update_status", async ({ userId, status }) => {
+      const [gameName, tagLine] = userId.split("#");
+      const users = db.collection("users");
+      await users.updateOne(
+        { gameName, tagLine },
+        { $set: { status } }
+      );
+      console.log(`🌐 Kullanıcı durumu güncellendi: ${userId} -> ${status}`);
+      io.emit("user_status", { userId, status });
     });
 
     socket.on("get_friends", async ({ userId }) => {
       const friends = db.collection("friends");
 
-      const relations = await friends.find({
-        $or: [{ from: userId }, { to: userId }],
-        status: "accepted"
-      }).toArray();
+      const relations = await friends
+        .find({
+          $or: [{ from: userId }, { to: userId }],
+          status: "accepted",
+        })
+        .toArray();
 
       if (!relations.length) {
         socket.emit("friend_list", []);
@@ -132,26 +217,30 @@ async function startServer() {
       );
 
       const users = db.collection("users");
-      const profiles = await users.find({
-        $or: userList.map((id) => {
-          const [gameName, tagLine] = id.split("#");
-          return { gameName, tagLine };
-        }),
-      }).toArray();
+      const profiles = await users
+        .find({
+          $or: userList.map((id) => {
+            const [gameName, tagLine] = id.split("#");
+            return { gameName, tagLine };
+          }),
+        })
+        .toArray();
 
       const enriched = relations.map((rel) => {
         const friendId = rel.from === userId ? rel.to : rel.from;
         const [g, t] = friendId.split("#");
-        const profile = profiles.find((p) => p.gameName === g && p.tagLine === t);
+        const profile = profiles.find(
+          (p) => p.gameName === g && p.tagLine === t
+        );
 
         return {
           gameName: g,
           tagLine: t,
-          status: rel.status,
+          status: profile?.status ?? "offline",
           direction: rel.from === userId ? "sent" : "received",
           avatar: profile?.avatar ?? null,
           from: rel.from,
-          to: rel.to
+          to: rel.to,
         };
       });
 
@@ -165,9 +254,10 @@ async function startServer() {
         to,
         message,
         timestamp: new Date(),
-        isRead: false
+        isRead: false,
       };
       await messages.insertOne(msg);
+      console.log(`📨 Mesaj gönderildi: ${from} -> ${to}`);
       io.emit("receive_message", msg);
     });
 
@@ -175,8 +265,10 @@ async function startServer() {
       const messages = db.collection("messages");
       const result = await messages
         .find({ $or: [{ from, to }, { from: to, to: from }] })
-        .sort({ timestamp: 1 }).toArray();
+        .sort({ timestamp: 1 })
+        .toArray();
 
+      console.log(`📬 Mesajlar alındı: ${from} ↔ ${to}`);
       socket.emit("chat_messages", result);
     });
 
@@ -186,10 +278,37 @@ async function startServer() {
         { from, to, isRead: false },
         { $set: { isRead: true } }
       );
+      console.log(`📘 Mesajlar okundu: ${from} -> ${to}`);
+
+      // Güncellenmiş mesajları gönder
+      const updatedMessages = await messages
+        .find({ $or: [{ from, to }, { from: to, to: from }] })
+        .sort({ timestamp: 1 })
+        .toArray();
+
+      const sockets = [...io.sockets.sockets.values()];
+      const fromSocket = sockets.find((s) => s.userId === from);
+      const toSocket = sockets.find((s) => s.userId === to);
+
+      if (fromSocket) {
+        fromSocket.emit("messages_updated", updatedMessages);
+      }
+      if (toSocket) {
+        toSocket.emit("messages_updated", updatedMessages);
+      }
     });
 
-    socket.on("disconnect", () => {
-      console.log("⛔ Bağlantı kesildi:", socket.id);
+    socket.on("disconnect", async () => {
+      if (socket.userId) {
+        const [gameName, tagLine] = socket.userId.split("#");
+        const users = db.collection("users");
+        await users.updateOne(
+          { gameName, tagLine },
+          { $set: { status: "offline" } }
+        );
+        io.emit("user_status", { userId: socket.userId, status: "offline" });
+        console.log(`⛔ Bağlantı kesildi: ${socket.userId}`);
+      }
     });
   });
 }
