@@ -19,8 +19,7 @@ const io = new Server(server, {
   },
 });
 
-const uri =
-  "mongodb+srv://valostoremobile:7gv2texdfgcyV3DG@cluster0.egxyjsw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+const uri = "mongodb+srv://valostoremobile:7gv2texdfgcyV3DG@cluster0.egxyjsw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 const client = new MongoClient(uri);
 let db;
 
@@ -44,17 +43,6 @@ async function startServer() {
       }
 
       console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
-
-      // ✅ Kullanıcı yeniden bağlandığında offline pending istekleri bildir
-      const pending = await db.collection("friends").find({
-        to: userId,
-        status: "pending"
-      }).toArray();
-
-      pending.forEach(req => {
-        socket.emit("friend_request", { from: req.from, to: req.to });
-        console.log(`📬 Offline isteği bildirildi → ${userId}`);
-      });
     });
 
     socket.on("search_user", async ({ gameName, tagLine }) => {
@@ -71,7 +59,7 @@ async function startServer() {
         await friends.insertOne({ from, to, status: "pending" });
         console.log(`👥 İstek gönderildi: ${from} ➡ ${to}`);
 
-        const toSocket = [...io.sockets.sockets.values()].find((s) => s.userId === to);
+        const toSocket = [...io.sockets.sockets.values()].find(s => s.userId === to);
         if (toSocket) {
           console.log(`🔔 Bildirim gönderiliyor → ${to}`);
           toSocket.emit("friend_request", { from, to });
@@ -83,26 +71,15 @@ async function startServer() {
 
     socket.on("accept_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
-
-      const result = await friends.updateOne(
-        { from, to, status: "pending" },
-        { $set: { status: "accepted" } }
-      );
-
+      await friends.updateOne({ from, to, status: "pending" }, { $set: { status: "accepted" } });
+      await friends.insertOne({ from: to, to: from, status: "accepted" });
       console.log(`✅ Arkadaşlık kabul edildi: ${from} ↔ ${to}`);
 
-      if (result.modifiedCount === 1) {
-        const sockets = [...io.sockets.sockets.values()];
-        const fromSocket = sockets.find((s) => s.userId === from);
-        const toSocket = sockets.find((s) => s.userId === to);
-
-        if (fromSocket) {
-          fromSocket.emit("friend_list_request");
-        }
-        if (toSocket) {
-          toSocket.emit("friend_list_request");
-        }
+      const toSocket = [...io.sockets.sockets.values()].find(s => s.userId === from);
+      if (toSocket) {
+        toSocket.emit("friend_list_request"); // Listeyi yenilemesi için karşıya sinyal gönder
       }
+      socket.emit("friend_list_request"); // Kabul eden taraf da güncellesin
     });
 
     socket.on("block_friend", async ({ from, to }) => {
@@ -116,9 +93,10 @@ async function startServer() {
 
     socket.on("get_friends", async ({ userId }) => {
       const friends = db.collection("friends");
-      const relations = await friends
-        .find({ $or: [{ from: userId }, { to: userId }] })
-        .toArray();
+
+      const relations = await friends.find({
+        $or: [{ from: userId }, { to: userId }],
+      }).toArray();
 
       if (!relations.length) {
         socket.emit("friend_list", []);
@@ -130,21 +108,17 @@ async function startServer() {
       );
 
       const users = db.collection("users");
-      const profiles = await users
-        .find({
-          $or: userList.map((id) => {
-            const [gameName, tagLine] = id.split("#");
-            return { gameName, tagLine };
-          }),
-        })
-        .toArray();
+      const profiles = await users.find({
+        $or: userList.map((id) => {
+          const [gameName, tagLine] = id.split("#");
+          return { gameName, tagLine };
+        }),
+      }).toArray();
 
       const enriched = relations.map((rel) => {
         const friendId = rel.from === userId ? rel.to : rel.from;
         const [g, t] = friendId.split("#");
-        const profile = profiles.find(
-          (p) => p.gameName === g && p.tagLine === t
-        );
+        const profile = profiles.find((p) => p.gameName === g && p.tagLine === t);
 
         return {
           gameName: g,
@@ -152,6 +126,8 @@ async function startServer() {
           status: rel.status,
           direction: rel.from === userId ? "sent" : "received",
           avatar: profile?.avatar ?? null,
+          from: rel.from,
+          to: rel.to
         };
       });
 
@@ -165,7 +141,7 @@ async function startServer() {
         to,
         message,
         timestamp: new Date(),
-        isRead: false,
+        isRead: false
       };
       await messages.insertOne(msg);
       io.emit("receive_message", msg);
@@ -175,8 +151,8 @@ async function startServer() {
       const messages = db.collection("messages");
       const result = await messages
         .find({ $or: [{ from, to }, { from: to, to: from }] })
-        .sort({ timestamp: 1 })
-        .toArray();
+        .sort({ timestamp: 1 }).toArray();
+
       socket.emit("chat_messages", result);
     });
 
