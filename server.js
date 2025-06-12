@@ -44,6 +44,17 @@ async function startServer() {
       }
 
       console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
+
+      // ✅ Kullanıcı yeniden bağlandığında offline pending istekleri bildir
+      const pending = await db.collection("friends").find({
+        to: userId,
+        status: "pending"
+      }).toArray();
+
+      pending.forEach(req => {
+        socket.emit("friend_request", { from: req.from, to: req.to });
+        console.log(`📬 Offline isteği bildirildi → ${userId}`);
+      });
     });
 
     socket.on("search_user", async ({ gameName, tagLine }) => {
