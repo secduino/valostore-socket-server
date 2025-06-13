@@ -31,25 +31,24 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
 
-    socket.on("register_user", async ({ gameName, tagLine }) => {
+    socket.on("register_user", async ({ gameName, tagLine, profileImage }) => {
       const userId = `${gameName}#${tagLine}`;
       socket.userId = userId;
 
       const users = db.collection("users");
       const existing = await users.findOne({ gameName, tagLine });
       if (!existing) {
-        await users.insertOne({ gameName, tagLine, status: "online" });
+        await users.insertOne({ gameName, tagLine, status: "online", profileImage });
         console.log(`🧍 Yeni kullanıcı: ${userId}`);
       } else {
         await users.updateOne(
           { gameName, tagLine },
-          { $set: { status: "online" } }
+          { $set: { status: "online", profileImage } }
         );
       }
 
       console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
 
-      // Offline'da gelen pending istekleri bildir
       const pending = await db.collection("friends").find({
         to: userId,
         status: "pending",
@@ -60,7 +59,6 @@ async function startServer() {
         console.log(`📬 Offline isteği bildirildi → ${userId}`);
       });
 
-      // Kullanıcı durumunu yayınla
       io.emit("user_status", { userId, status: "online" });
     });
 
@@ -165,7 +163,6 @@ async function startServer() {
         { $set: { status: "blocked" } },
         { upsert: true }
       );
-      // Arkadaşlık ilişkisini sil
       await friends.deleteOne({
         $or: [
           { from, to, status: "accepted" },
@@ -238,7 +235,7 @@ async function startServer() {
           tagLine: t,
           status: profile?.status ?? "offline",
           direction: rel.from === userId ? "sent" : "received",
-          avatar: profile?.avatar ?? null,
+          profileImage: profile?.profileImage ?? null,
           from: rel.from,
           to: rel.to,
         };
@@ -280,7 +277,6 @@ async function startServer() {
       );
       console.log(`📘 Mesajlar okundu: ${from} -> ${to}`);
 
-      // Güncellenmiş mesajları gönder
       const updatedMessages = await messages
         .find({ $or: [{ from, to }, { from: to, to: from }] })
         .sort({ timestamp: 1 })
