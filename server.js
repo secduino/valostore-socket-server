@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -19,7 +20,7 @@ const io = new Server(server, {
   },
 });
 
-const uri = "mongodb+srv://valostoremobile:7gv2texdfgcyV3DG@cluster0.egxyjsw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
 let db;
 
@@ -273,7 +274,6 @@ async function startServer() {
       if (toSocket) toSocket.emit("messages_updated", updatedMessages);
     });
 
-    // ✅ DELETE_CHAT EVENTİ EKLENDİ
     socket.on("delete_chat", async ({ from, to }) => {
       const messages = db.collection("messages");
       const result = await messages.deleteMany({
