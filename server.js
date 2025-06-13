@@ -31,21 +31,21 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
 
-socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
-  const userId = `${gameName}#${tagLine}`;
-  socket.userId = userId;
+    socket.on("register_user", async ({ gameName, tagLine }) => {
+      const userId = `${gameName}#${tagLine}`;
+      socket.userId = userId;
 
-  const users = db.collection("users");
-  const existing = await users.findOne({ gameName, tagLine });
-
-  if (!existing) {
-    await users.insertOne({ gameName, tagLine, avatar, status: "online" });
-  } else {
-    await users.updateOne(
-      { gameName, tagLine },
-      { $set: { status: "online", avatar } }
-    );
-  }
+      const users = db.collection("users");
+      const existing = await users.findOne({ gameName, tagLine });
+      if (!existing) {
+        await users.insertOne({ gameName, tagLine, status: "online" });
+        console.log(`🧍 Yeni kullanıcı: ${userId}`);
+      } else {
+        await users.updateOne(
+          { gameName, tagLine },
+          { $set: { status: "online" } }
+        );
+      }
 
       console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
 
@@ -108,30 +108,22 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
         const fromSocket = sockets.find((s) => s.userId === from);
         const toSocket = sockets.find((s) => s.userId === to);
 
-        if (fromSocket) {
-          fromSocket.emit("friend_list_request");
-        }
-        if (toSocket) {
-          toSocket.emit("friend_list_request");
-        }
+        if (fromSocket) fromSocket.emit("friend_list_request");
+        if (toSocket) toSocket.emit("friend_list_request");
       }
     });
 
     socket.on("reject_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       await friends.deleteOne({ from, to, status: "pending" });
-      console.log(`❌ Arkadaşlık isteği reddedildi: ${from} ➡ ${to}`);
+      console.log(`❌ Arkadaşlık reddedildi: ${from} ➡ ${to}`);
 
       const sockets = [...io.sockets.sockets.values()];
       const fromSocket = sockets.find((s) => s.userId === from);
       const toSocket = sockets.find((s) => s.userId === to);
 
-      if (fromSocket) {
-        fromSocket.emit("friend_list_request");
-      }
-      if (toSocket) {
-        toSocket.emit("friend_list_request");
-      }
+      if (fromSocket) fromSocket.emit("friend_list_request");
+      if (toSocket) toSocket.emit("friend_list_request");
     });
 
     socket.on("remove_friend", async ({ from, to }) => {
@@ -148,12 +140,8 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
       const fromSocket = sockets.find((s) => s.userId === from);
       const toSocket = sockets.find((s) => s.userId === to);
 
-      if (fromSocket) {
-        fromSocket.emit("friend_list_request");
-      }
-      if (toSocket) {
-        toSocket.emit("friend_list_request");
-      }
+      if (fromSocket) fromSocket.emit("friend_list_request");
+      if (toSocket) toSocket.emit("friend_list_request");
     });
 
     socket.on("block_friend", async ({ from, to }) => {
@@ -175,12 +163,8 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
       const fromSocket = sockets.find((s) => s.userId === from);
       const toSocket = sockets.find((s) => s.userId === to);
 
-      if (fromSocket) {
-        fromSocket.emit("friend_list_request");
-      }
-      if (toSocket) {
-        toSocket.emit("friend_list_request");
-      }
+      if (fromSocket) fromSocket.emit("friend_list_request");
+      if (toSocket) toSocket.emit("friend_list_request");
     });
 
     socket.on("update_status", async ({ userId, status }) => {
@@ -190,13 +174,12 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
         { gameName, tagLine },
         { $set: { status } }
       );
-      console.log(`🌐 Kullanıcı durumu güncellendi: ${userId} -> ${status}`);
+      console.log(`🌐 Durum güncellendi: ${userId} -> ${status}`);
       io.emit("user_status", { userId, status });
     });
 
     socket.on("get_friends", async ({ userId }) => {
       const friends = db.collection("friends");
-
       const relations = await friends
         .find({
           $or: [{ from: userId }, { to: userId }],
@@ -235,7 +218,7 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
           tagLine: t,
           status: profile?.status ?? "offline",
           direction: rel.from === userId ? "sent" : "received",
-          profileImage: profile?.profileImage ?? null,
+          avatar: profile?.avatar ?? null,
           from: rel.from,
           to: rel.to,
         };
@@ -275,7 +258,7 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
         { from, to, isRead: false },
         { $set: { isRead: true } }
       );
-      console.log(`📘 Mesajlar okundu: ${from} -> ${to}`);
+      console.log(`📘 Okundu: ${from} -> ${to}`);
 
       const updatedMessages = await messages
         .find({ $or: [{ from, to }, { from: to, to: from }] })
@@ -286,12 +269,20 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
       const fromSocket = sockets.find((s) => s.userId === from);
       const toSocket = sockets.find((s) => s.userId === to);
 
-      if (fromSocket) {
-        fromSocket.emit("messages_updated", updatedMessages);
-      }
-      if (toSocket) {
-        toSocket.emit("messages_updated", updatedMessages);
-      }
+      if (fromSocket) fromSocket.emit("messages_updated", updatedMessages);
+      if (toSocket) toSocket.emit("messages_updated", updatedMessages);
+    });
+
+    // ✅ DELETE_CHAT EVENTİ EKLENDİ
+    socket.on("delete_chat", async ({ from, to }) => {
+      const messages = db.collection("messages");
+      const result = await messages.deleteMany({
+        $or: [
+          { from, to },
+          { from: to, to: from }
+        ]
+      });
+      console.log(`🗑️ Sohbet silindi: ${from} ↔ ${to} (${result.deletedCount} mesaj)`);
     });
 
     socket.on("disconnect", async () => {
@@ -308,15 +299,6 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
     });
   });
 }
-
-socket.on("delete_chat", async ({ from, to }) => {
-  await messages.deleteMany({
-    $or: [
-      { from, to },
-      { from: to, to: from }
-    ]
-  });
-});
 
 const port = process.env.PORT || 10000;
 server.listen(port, () => {
