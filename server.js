@@ -31,21 +31,21 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
 
-    socket.on("register_user", async ({ gameName, tagLine, profileImage }) => {
-      const userId = `${gameName}#${tagLine}`;
-      socket.userId = userId;
+socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
+  const userId = `${gameName}#${tagLine}`;
+  socket.userId = userId;
 
-      const users = db.collection("users");
-      const existing = await users.findOne({ gameName, tagLine });
-      if (!existing) {
-        await users.insertOne({ gameName, tagLine, status: "online", profileImage });
-        console.log(`🧍 Yeni kullanıcı: ${userId}`);
-      } else {
-        await users.updateOne(
-          { gameName, tagLine },
-          { $set: { status: "online", profileImage } }
-        );
-      }
+  const users = db.collection("users");
+  const existing = await users.findOne({ gameName, tagLine });
+
+  if (!existing) {
+    await users.insertOne({ gameName, tagLine, avatar, status: "online" });
+  } else {
+    await users.updateOne(
+      { gameName, tagLine },
+      { $set: { status: "online", avatar } }
+    );
+  }
 
       console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
 
