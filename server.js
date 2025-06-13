@@ -309,6 +309,15 @@ socket.on("register_user", async ({ gameName, tagLine, avatar }) => {
   });
 }
 
+socket.on("delete_chat", async ({ from, to }) => {
+  await messages.deleteMany({
+    $or: [
+      { from, to },
+      { from: to, to: from }
+    ]
+  });
+});
+
 const port = process.env.PORT || 10000;
 server.listen(port, () => {
   console.log(`🚀 Sunucu çalışıyor: ${port}`);
