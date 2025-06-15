@@ -9,7 +9,7 @@ const app = express();
 app.use(cors());
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Valstore socket server çalışıyor.");
+  res.status(200).send("✅ Valostore socket server çalışıyor.");
 });
 
 const server = http.createServer(app);
