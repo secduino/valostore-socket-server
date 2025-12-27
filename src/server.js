@@ -40,6 +40,19 @@ async function isUserOnline(userId) {
   return user?.status === "online";
 }
 
+// Yardımcı fonksiyon: Arkadaş ID'lerini al
+async function getFriendIds(userId) {
+  const friends = db.collection("friends");
+  const relations = await friends
+    .find({
+      $or: [{ from: userId }, { to: userId }],
+      status: "accepted",
+    })
+    .toArray();
+  
+  return relations.map(rel => rel.from === userId ? rel.to : rel.from);
+}
+
 async function startServer() {
   await client.connect();
   db = client.db("valostore");
@@ -62,7 +75,6 @@ async function startServer() {
 
   // Index oluştur (performans için) - hata olursa devam et
   try {
-    // Unique olmayan index - duplicate kayıtlara izin ver
     await db.collection("users").createIndex({ gameName: 1, tagLine: 1 });
     console.log("📇 users index oluşturuldu");
   } catch (err) {
@@ -96,7 +108,7 @@ async function startServer() {
       const users = db.collection("users");
       
       // Upsert kullan - varsa güncelle, yoksa ekle (duplicate önler)
-      await users.updateOne(
+      const result = await users.updateOne(
         { gameName, tagLine },
         { 
           $set: { status: "online", lastSeen: new Date() },
@@ -110,7 +122,7 @@ async function startServer() {
         { upsert: true }
       );
 
-      console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
+      console.log(`📍 Socket eşlendi: ${socket.id} → ${userId} (upserted: ${result.upsertedCount || 0})`);
 
       // Bekleyen arkadaşlık isteklerini gönder
       const pending = await db.collection("friends").find({
@@ -343,12 +355,22 @@ async function startServer() {
       const [gameName, tagLine] = userId.split("#");
       const users = db.collection("users");
       
-      await users.updateOne(
+      // UPSERT kullan - kullanıcı yoksa oluştur
+      const result = await users.updateOne(
         { gameName, tagLine },
-        { $set: { status, lastSeen: new Date() } }
+        { 
+          $set: { status, lastSeen: new Date() },
+          $setOnInsert: { 
+            avatar: null,
+            displayName: null,
+            statusMessage: null,
+            createdAt: new Date()
+          }
+        },
+        { upsert: true }
       );
       
-      console.log(`🌐 Durum güncellendi: ${userId} → ${status}`);
+      console.log(`🌐 Durum güncellendi: ${userId} → ${status} (matched: ${result.matchedCount}, upserted: ${result.upsertedCount || 0})`);
       io.emit("user_status", { userId, status });
     });
 
@@ -376,18 +398,40 @@ async function startServer() {
       const [gameName, tagLine] = userId.split("#");
       const users = db.collection("users");
       
+      // DEBUG: Önce kullanıcıyı kontrol et
+      const existingUser = await users.findOne({ gameName, tagLine });
+      console.log(`🔍 Profil güncelleme - Kullanıcı aranıyor: gameName="${gameName}", tagLine="${tagLine}"`);
+      console.log(`🔍 Bulunan kullanıcı:`, existingUser ? `ID: ${existingUser._id}` : 'YOK - Yeni oluşturulacak');
+      
       const updateFields = {};
       if (avatar !== undefined) updateFields.avatar = avatar;
       if (displayName !== undefined) updateFields.displayName = displayName;
       if (statusMessage !== undefined) updateFields.statusMessage = statusMessage;
       updateFields.updatedAt = new Date();
       
-      await users.updateOne(
+      // UPSERT kullan - kullanıcı yoksa oluştur, varsa güncelle
+      const result = await users.updateOne(
         { gameName, tagLine },
-        { $set: updateFields }
+        { 
+          $set: updateFields,
+          $setOnInsert: { 
+            status: 'online',
+            createdAt: new Date()
+          }
+        },
+        { upsert: true }
       );
       
       console.log(`👤 Profil güncellendi: ${userId}`, updateFields);
+      console.log(`📊 Update sonucu: matched=${result.matchedCount}, modified=${result.modifiedCount}, upserted=${result.upsertedCount || 0}`);
+      
+      // Güncelleme sonrası kullanıcıyı tekrar kontrol et
+      const updatedUser = await users.findOne({ gameName, tagLine });
+      console.log(`✅ Güncel profil:`, {
+        avatar: updatedUser?.avatar,
+        displayName: updatedUser?.displayName,
+        statusMessage: updatedUser?.statusMessage
+      });
       
       socket.emit("profile_updated", { success: true, userId });
       
@@ -396,7 +440,10 @@ async function startServer() {
       friends.forEach(friendId => {
         const friendSocket = findSocketByUserId(friendId);
         if (friendSocket) {
-          friendSocket.emit("friend_profile_updated", { userId, ...updateFields });
+          friendSocket.emit("friend_profile_updated", { 
+            oderId: userId,
+            ...updateFields 
+          });
         }
       });
     });
@@ -417,11 +464,11 @@ async function startServer() {
           status: user.status,
           lastSeen: user.lastSeen
         });
+        console.log(`👤 Profil sorgulandı: ${userId} → avatar: ${user.avatar}, displayName: ${user.displayName}, statusMessage: ${user.statusMessage}`);
       } else {
         socket.emit("user_profile_response", null);
+        console.log(`👤 Profil sorgulandı: ${userId} → BULUNAMADI`);
       }
-      
-      console.log(`👤 Profil sorgulandı: ${userId}`);
     });
 
     // ==================== ARKADAŞ LİSTESİ ====================
@@ -642,19 +689,6 @@ async function startServer() {
       }
     });
   });
-
-  // Yardımcı fonksiyon: Arkadaş ID'lerini al
-  async function getFriendIds(userId) {
-    const friends = db.collection("friends");
-    const relations = await friends
-      .find({
-        $or: [{ from: userId }, { to: userId }],
-        status: "accepted",
-      })
-      .toArray();
-    
-    return relations.map(rel => rel.from === userId ? rel.to : rel.from);
-  }
 }
 
 const port = process.env.PORT || 10000;
