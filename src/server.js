@@ -45,11 +45,43 @@ async function startServer() {
   db = client.db("valostore");
   console.log("🟢 MongoDB bağlantısı başarılı");
 
-  // Index oluştur (performans için)
-  await db.collection("users").createIndex({ gameName: 1, tagLine: 1 }, { unique: true });
-  await db.collection("friends").createIndex({ from: 1, to: 1 });
-  await db.collection("friends").createIndex({ status: 1 });
-  await db.collection("messages").createIndex({ from: 1, to: 1, timestamp: 1 });
+  // Boş kayıtları temizle
+  try {
+    await db.collection("users").deleteMany({ 
+      $or: [
+        { gameName: "" },
+        { gameName: null },
+        { tagLine: "" },
+        { tagLine: null }
+      ]
+    });
+    console.log("🧹 Boş kullanıcı kayıtları temizlendi");
+  } catch (err) {
+    console.log("⚠️ Temizleme atlandı:", err.message);
+  }
+
+  // Index oluştur (performans için) - hata olursa devam et
+  try {
+    await db.collection("users").createIndex({ gameName: 1, tagLine: 1 }, { unique: true });
+    console.log("📇 users index oluşturuldu");
+  } catch (err) {
+    console.log("⚠️ users index atlandı:", err.message);
+  }
+
+  try {
+    await db.collection("friends").createIndex({ from: 1, to: 1 });
+    await db.collection("friends").createIndex({ status: 1 });
+    console.log("📇 friends index oluşturuldu");
+  } catch (err) {
+    console.log("⚠️ friends index atlandı:", err.message);
+  }
+
+  try {
+    await db.collection("messages").createIndex({ from: 1, to: 1, timestamp: 1 });
+    console.log("📇 messages index oluşturuldu");
+  } catch (err) {
+    console.log("⚠️ messages index atlandı:", err.message);
+  }
 
   io.on("connection", (socket) => {
     console.log("🔌 Yeni kullanıcı bağlandı:", socket.id);
