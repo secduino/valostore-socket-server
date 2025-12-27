@@ -62,7 +62,8 @@ async function startServer() {
 
   // Index oluştur (performans için) - hata olursa devam et
   try {
-    await db.collection("users").createIndex({ gameName: 1, tagLine: 1 }, { unique: true });
+    // Unique olmayan index - duplicate kayıtlara izin ver
+    await db.collection("users").createIndex({ gameName: 1, tagLine: 1 });
     console.log("📇 users index oluşturuldu");
   } catch (err) {
     console.log("⚠️ users index atlandı:", err.message);
@@ -93,26 +94,21 @@ async function startServer() {
       socket.userId = userId;
 
       const users = db.collection("users");
-      const existing = await users.findOne({ gameName, tagLine });
       
-      if (!existing) {
-        await users.insertOne({ 
-          gameName, 
-          tagLine, 
-          status: "online",
-          avatar: null,
-          displayName: null,
-          statusMessage: null,
-          createdAt: new Date(),
-          lastSeen: new Date()
-        });
-        console.log(`🧍 Yeni kullanıcı: ${userId}`);
-      } else {
-        await users.updateOne(
-          { gameName, tagLine },
-          { $set: { status: "online", lastSeen: new Date() } }
-        );
-      }
+      // Upsert kullan - varsa güncelle, yoksa ekle (duplicate önler)
+      await users.updateOne(
+        { gameName, tagLine },
+        { 
+          $set: { status: "online", lastSeen: new Date() },
+          $setOnInsert: { 
+            avatar: null,
+            displayName: null,
+            statusMessage: null,
+            createdAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
 
       console.log(`📍 Socket eşlendi: ${socket.id} → ${userId}`);
 
