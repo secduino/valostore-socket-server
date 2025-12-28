@@ -374,6 +374,39 @@ async function startServer() {
       io.emit("user_status", { userId, status });
     });
 
+    // ==================== OYUN AKTİVİTESİ ====================
+    
+    socket.on("update_game_activity", async ({ userId, activity }) => {
+      const [gameName, tagLine] = userId.split("#");
+      const users = db.collection("users");
+      
+      // Aktiviteyi kaydet
+      await users.updateOne(
+        { gameName, tagLine },
+        { 
+          $set: { 
+            gameActivity: activity,
+            activityUpdatedAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      console.log(`🎮 Oyun aktivitesi: ${userId} → ${activity.activity}`);
+      
+      // Arkadaşlara bildir
+      const friends = await getFriendIds(userId);
+      friends.forEach(friendId => {
+        const friendSocket = findSocketByUserId(friendId);
+        if (friendSocket) {
+          friendSocket.emit("friend_activity_changed", { 
+            userId, 
+            activity 
+          });
+        }
+      });
+    });
+
     socket.on("get_user_status", async ({ userId }) => {
       const [gameName, tagLine] = userId.split("#");
       const users = db.collection("users");
@@ -552,6 +585,7 @@ async function startServer() {
           avatar: profile?.avatar ?? null,
           displayName: profile?.displayName ?? null,
           statusMessage: profile?.statusMessage ?? null,
+          gameActivity: profile?.gameActivity ?? null,
           lastSeen: profile?.lastSeen ?? null,
           lastMessage: lastMsgData?.lastMessage?.message ?? null,
           lastMessageTime: lastMsgData?.lastMessage?.timestamp ?? null,
