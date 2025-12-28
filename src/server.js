@@ -53,6 +53,23 @@ async function getFriendIds(userId) {
   return relations.map(rel => rel.from === userId ? rel.to : rel.from);
 }
 
+// ==================== YENİ: Status değişikliğini arkadaşlara bildir ====================
+async function notifyFriendsOfStatusChange(userId, newStatus) {
+  const friendIds = await getFriendIds(userId);
+  
+  console.log(`📢 Status değişikliği bildiriliyor: ${userId} → ${newStatus} (${friendIds.length} arkadaşa)`);
+  
+  friendIds.forEach(friendId => {
+    const friendSocket = findSocketByUserId(friendId);
+    if (friendSocket) {
+      // Hem user_status hem friend_status_changed event'lerini gönder
+      friendSocket.emit("user_status", { userId, status: newStatus });
+      friendSocket.emit("friend_status_changed", { userId, status: newStatus });
+      console.log(`  → ${friendId}'e bildirildi`);
+    }
+  });
+}
+
 async function startServer() {
   await client.connect();
   db = client.db("valostore");
@@ -73,7 +90,7 @@ async function startServer() {
     console.log("⚠️ Temizleme atlandı:", err.message);
   }
 
-  // Index oluştur (performans için) - hata olursa devam et
+  // Index oluştur (performans için)
   try {
     await db.collection("users").createIndex({ gameName: 1, tagLine: 1 });
     console.log("📇 users index oluşturuldu");
@@ -104,10 +121,9 @@ async function startServer() {
     socket.on("register_user", async ({ gameName, tagLine }) => {
       const userId = `${gameName}#${tagLine}`;
       socket.userId = userId;
-
       const users = db.collection("users");
       
-      // Upsert kullan - varsa güncelle, yoksa ekle (duplicate önler)
+      // Upsert kullan - varsa güncelle, yoksa ekle
       const result = await users.updateOne(
         { gameName, tagLine },
         { 
@@ -135,7 +151,10 @@ async function startServer() {
         console.log(`📬 ${pending.length} bekleyen istek bildirildi → ${userId}`);
       }
 
-      // Herkese online durumunu bildir
+      // Arkadaşlara online durumunu bildir
+      await notifyFriendsOfStatusChange(userId, "online");
+      
+      // Genel yayın (tüm bağlı kullanıcılara)
       io.emit("user_status", { userId, status: "online" });
     });
 
@@ -145,13 +164,11 @@ async function startServer() {
       console.log(`🔍 Arama: ${gameName}#${tagLine}`);
       const users = db.collection("users");
       
-      // Tam eşleşme veya kısmi arama
       let result;
       if (tagLine) {
         result = await users.findOne({ gameName, tagLine });
         socket.emit("search_results", result ? [result] : []);
       } else {
-        // Sadece gameName ile ara (kısmi)
         const results = await users.find({ 
           gameName: { $regex: gameName, $options: 'i' } 
         }).limit(10).toArray();
@@ -164,13 +181,11 @@ async function startServer() {
     socket.on("add_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       
-      // Kendine istek gönderme kontrolü
       if (from === to) {
         socket.emit("friend_request_status", { status: "error", message: "Cannot add yourself" });
         return;
       }
 
-      // Zaten arkadaş mı?
       const alreadyFriends = await friends.findOne({
         $or: [
           { from, to, status: "accepted" },
@@ -184,7 +199,6 @@ async function startServer() {
         return;
       }
 
-      // Bekleyen istek var mı?
       const pendingRequest = await friends.findOne({
         $or: [
           { from, to, status: "pending" },
@@ -193,7 +207,6 @@ async function startServer() {
       });
 
       if (pendingRequest) {
-        // Karşı taraf bize istek göndermişse, otomatik kabul et
         if (pendingRequest.from === to && pendingRequest.to === from) {
           await friends.updateOne(
             { from: to, to: from, status: "pending" },
@@ -215,7 +228,6 @@ async function startServer() {
         return;
       }
 
-      // Engellenmiş mi?
       const blocked = await friends.findOne({
         $or: [
           { from, to, status: "blocked" },
@@ -228,7 +240,6 @@ async function startServer() {
         return;
       }
 
-      // Yeni istek oluştur
       await friends.insertOne({ 
         from, 
         to, 
@@ -238,7 +249,6 @@ async function startServer() {
       
       console.log(`👥 İstek gönderildi: ${from} → ${to}`);
 
-      // Alıcıya bildirim gönder
       const toSocket = findSocketByUserId(to);
       if (toSocket) {
         console.log(`🔔 Bildirim gönderiliyor → ${to}`);
@@ -281,7 +291,6 @@ async function startServer() {
 
       const fromSocket = findSocketByUserId(from);
       const toSocket = findSocketByUserId(to);
-
       if (fromSocket) fromSocket.emit("friend_list_request");
       if (toSocket) toSocket.emit("friend_list_request");
     });
@@ -298,7 +307,6 @@ async function startServer() {
 
       const fromSocket = findSocketByUserId(from);
       const toSocket = findSocketByUserId(to);
-
       if (fromSocket) fromSocket.emit("friend_list_request");
       if (toSocket) toSocket.emit("friend_list_request");
     });
@@ -306,7 +314,6 @@ async function startServer() {
     socket.on("block_friend", async ({ from, to }) => {
       const friends = db.collection("friends");
       
-      // Önce mevcut ilişkileri sil
       await friends.deleteMany({
         $or: [
           { from, to },
@@ -314,7 +321,6 @@ async function startServer() {
         ],
       });
       
-      // Engelleme kaydı ekle
       await friends.insertOne({ 
         from, 
         to, 
@@ -326,7 +332,6 @@ async function startServer() {
 
       const fromSocket = findSocketByUserId(from);
       const toSocket = findSocketByUserId(to);
-
       if (fromSocket) fromSocket.emit("friend_list_request");
       if (toSocket) toSocket.emit("friend_list_request");
     });
@@ -355,11 +360,15 @@ async function startServer() {
       const [gameName, tagLine] = userId.split("#");
       const users = db.collection("users");
       
-      // UPSERT kullan - kullanıcı yoksa oluştur
+      // Geçerli status değerleri: online, away, busy, offline
+      const validStatuses = ["online", "away", "busy", "offline"];
+      const normalizedStatus = validStatuses.includes(status) ? status : "offline";
+      
+      // UPSERT kullan
       const result = await users.updateOne(
         { gameName, tagLine },
         { 
-          $set: { status, lastSeen: new Date() },
+          $set: { status: normalizedStatus, lastSeen: new Date() },
           $setOnInsert: { 
             avatar: null,
             displayName: null,
@@ -370,8 +379,13 @@ async function startServer() {
         { upsert: true }
       );
       
-      console.log(`🌐 Durum güncellendi: ${userId} → ${status} (matched: ${result.matchedCount}, upserted: ${result.upsertedCount || 0})`);
-      io.emit("user_status", { userId, status });
+      console.log(`🌐 Durum güncellendi: ${userId} → ${normalizedStatus} (matched: ${result.matchedCount}, upserted: ${result.upsertedCount || 0})`);
+      
+      // Arkadaşlara status değişikliğini bildir
+      await notifyFriendsOfStatusChange(userId, normalizedStatus);
+      
+      // Genel yayın
+      io.emit("user_status", { userId, status: normalizedStatus });
     });
 
     // ==================== OYUN AKTİVİTESİ ====================
@@ -380,7 +394,6 @@ async function startServer() {
       const [gameName, tagLine] = userId.split("#");
       const users = db.collection("users");
       
-      // Aktiviteyi kaydet
       await users.updateOne(
         { gameName, tagLine },
         { 
@@ -394,7 +407,6 @@ async function startServer() {
       
       console.log(`🎮 Oyun aktivitesi: ${userId} → ${activity.activity}`);
       
-      // Arkadaşlara bildir
       const friends = await getFriendIds(userId);
       friends.forEach(friendId => {
         const friendSocket = findSocketByUserId(friendId);
@@ -412,9 +424,8 @@ async function startServer() {
       const users = db.collection("users");
       const user = await users.findOne({ gameName, tagLine });
       
-      // Ayrıca socket bağlı mı kontrol et
       const onlineSocket = findSocketByUserId(userId);
-      const status = onlineSocket ? "online" : (user?.status ?? "offline");
+      const status = onlineSocket ? (user?.status || "online") : (user?.status ?? "offline");
       
       socket.emit("user_status_response", { 
         userId, 
@@ -431,7 +442,6 @@ async function startServer() {
       const [gameName, tagLine] = userId.split("#");
       const users = db.collection("users");
       
-      // DEBUG: Önce kullanıcıyı kontrol et
       const existingUser = await users.findOne({ gameName, tagLine });
       console.log(`🔍 Profil güncelleme - Kullanıcı aranıyor: gameName="${gameName}", tagLine="${tagLine}"`);
       console.log(`🔍 Bulunan kullanıcı:`, existingUser ? `ID: ${existingUser._id}` : 'YOK - Yeni oluşturulacak');
@@ -442,7 +452,6 @@ async function startServer() {
       if (statusMessage !== undefined) updateFields.statusMessage = statusMessage;
       updateFields.updatedAt = new Date();
       
-      // UPSERT kullan - kullanıcı yoksa oluştur, varsa güncelle
       const result = await users.updateOne(
         { gameName, tagLine },
         { 
@@ -458,7 +467,6 @@ async function startServer() {
       console.log(`👤 Profil güncellendi: ${userId}`, updateFields);
       console.log(`📊 Update sonucu: matched=${result.matchedCount}, modified=${result.modifiedCount}, upserted=${result.upsertedCount || 0}`);
       
-      // Güncelleme sonrası kullanıcıyı tekrar kontrol et
       const updatedUser = await users.findOne({ gameName, tagLine });
       console.log(`✅ Güncel profil:`, {
         avatar: updatedUser?.avatar,
@@ -468,7 +476,6 @@ async function startServer() {
       
       socket.emit("profile_updated", { success: true, userId });
       
-      // Arkadaşlara profil değişikliğini bildir
       const friends = await getFriendIds(userId);
       friends.forEach(friendId => {
         const friendSocket = findSocketByUserId(friendId);
@@ -535,7 +542,6 @@ async function startServer() {
         })
         .toArray();
 
-      // Son mesajları al
       const messages = db.collection("messages");
       const lastMessages = await Promise.all(
         userList.map(async (friendId) => {
@@ -553,7 +559,6 @@ async function startServer() {
         })
       );
 
-      // Okunmamış mesaj sayılarını al
       const unreadCounts = await Promise.all(
         userList.map(async (friendId) => {
           const count = await messages.countDocuments({
@@ -570,9 +575,19 @@ async function startServer() {
         const [g, t] = friendId.split("#");
         const profile = profiles.find((p) => p.gameName === g && p.tagLine === t);
         
-        // Socket bağlı mı kontrol et
+        // Socket bağlı mı kontrol et ve status'u doğru belirle
         const onlineSocket = findSocketByUserId(friendId);
-        const status = onlineSocket ? "online" : (profile?.status ?? "offline");
+        
+        // Öncelik: veritabanındaki status (online/away/busy/offline)
+        // Eğer socket bağlıysa ve status yoksa, online varsay
+        let status;
+        if (profile?.status) {
+          status = profile.status;
+        } else if (onlineSocket) {
+          status = "online";
+        } else {
+          status = "offline";
+        }
         
         const lastMsgData = lastMessages.find(m => m.friendId === friendId);
         const unreadData = unreadCounts.find(u => u.friendId === friendId);
@@ -625,7 +640,6 @@ async function startServer() {
       
       console.log(`📨 Mesaj gönderildi: ${from} → ${to}`);
       
-      // Sadece ilgili kullanıcılara gönder
       const fromSocket = findSocketByUserId(from);
       const toSocket = findSocketByUserId(to);
       
@@ -639,7 +653,6 @@ async function startServer() {
         .find({ $or: [{ from, to }, { from: to, to: from }] })
         .sort({ timestamp: 1 })
         .toArray();
-
       console.log(`📬 Mesajlar alındı: ${from} ↔ ${to} (${result.length} mesaj)`);
       socket.emit("chat_messages", result);
     });
@@ -662,7 +675,6 @@ async function startServer() {
 
         const fromSocket = findSocketByUserId(from);
         const toSocket = findSocketByUserId(to);
-
         if (fromSocket) fromSocket.emit("messages_updated", updatedMessages);
         if (toSocket) toSocket.emit("messages_updated", updatedMessages);
       }
@@ -718,6 +730,10 @@ async function startServer() {
           { $set: { status: "offline", lastSeen: new Date() } }
         );
         
+        // Arkadaşlara offline durumunu bildir
+        await notifyFriendsOfStatusChange(socket.userId, "offline");
+        
+        // Genel yayın
         io.emit("user_status", { userId: socket.userId, status: "offline" });
         console.log(`⛔ Bağlantı kesildi: ${socket.userId}`);
       }
